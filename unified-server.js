@@ -427,7 +427,7 @@ class BrowserManager {
       );
 
       this.logger.info(
-        `[Browser] 弹窗清理阶段结束，准备进入 Code 按钮点击流程。`
+        `[Browser] 弹窗清理阶段结束，准备进入 Remix/Code 流程。`
       );
 
       await this.page.evaluate(() => {
@@ -439,6 +439,65 @@ class BrowserManager {
           overlays.forEach((el) => el.remove());
         }
       });
+
+      // [新版流程] 先尝试点击 Remix 按钮（新版页面右上角），弹出弹窗后填写并 Apply，跳转后再点 Code
+      const remixClicked = await (async () => {
+        try {
+          const remixBtn = this.page.locator('button:has-text("Remix")').first();
+          if (await remixBtn.isVisible({ timeout: 3000 })) {
+            this.logger.info('[Browser] (新版) 检测到 Remix 按钮，开始 Remix 流程...');
+            await this.page.evaluate(() => {
+              document.querySelectorAll("div.cdk-overlay-backdrop").forEach((el) => el.remove());
+            });
+            await this.page.waitForTimeout(500);
+            await remixBtn.click({ timeout: 5000 });
+            this.logger.info('[Browser] (新版) 已点击 Remix，等待弹窗出现...');
+            await this.page.waitForTimeout(1500);
+
+            // 等待弹窗内的输入框出现
+            const dialogLocator = this.page.locator('div[role="dialog"], div.cdk-overlay-pane, div.dialog').first();
+            await dialogLocator.waitFor({ state: "visible", timeout: 10000 });
+
+            // 查找 Name 和 Description 输入框（覆盖输入，fill 会清空后填入）
+            const dialogInputs = this.page.locator(
+              'div[role="dialog"] input, div[role="dialog"] textarea, div.cdk-overlay-pane input, div.cdk-overlay-pane textarea, div.dialog input, div.dialog textarea'
+            );
+            const inputCount = await dialogInputs.count();
+            this.logger.info(`[Browser] (新版) 弹窗内找到 ${inputCount} 个输入框`);
+
+            if (inputCount >= 1) {
+              await dialogInputs.nth(0).fill("Empty");
+              this.logger.info('[Browser] (新版) 已填写 Name');
+            }
+            if (inputCount >= 2) {
+              await dialogInputs.nth(1).fill("An empty project");
+              this.logger.info('[Browser] (新版) 已填写 Description');
+            }
+
+            // 点击 Apply 按钮
+            const applyBtn = this.page.locator('button:has-text("Apply")').first();
+            await applyBtn.waitFor({ state: "visible", timeout: 5000 });
+            await applyBtn.click();
+            this.logger.info('[Browser] (新版) 已点击 Apply，等待页面跳转...');
+
+            // 等待导航完成
+            await this.page.waitForLoadState("domcontentloaded", { timeout: 30000 });
+            await this.page.waitForTimeout(5000);
+            this.logger.info('[Browser] (新版) Remix 流程完成，已进入新页面');
+            return true;
+          }
+        } catch (e) {
+          this.logger.info(`[Browser] (兼容) 未检测到 Remix 或 Remix 流程失败，将直接尝试 Code: ${e.message}`);
+        }
+        return false;
+      })();
+
+      if (remixClicked) {
+        await this.page.evaluate(() => {
+          document.querySelectorAll("div.cdk-overlay-backdrop").forEach((el) => el.remove());
+        });
+        await this.page.waitForTimeout(1000);
+      }
 
       this.logger.info('[Browser] (步骤1/5) 准备点击 "Code" 按钮...');
       for (let i = 1; i <= 5; i++) {
